@@ -27,6 +27,16 @@ provider "aws" {
 
   # Only these AWS Account IDs may be operated on by this template
   allowed_account_ids = ["${local.account_id}"]
+
+  # Default tags applied to all resources
+  default_tags {
+    tags = {
+      ManagedBy   = "Terragrunt"
+      Environment = "${local.account_name}"
+      Owner       = "LightWave Media"
+      Repository  = "lightwave-infrastructure-live"
+    }
+  }
 }
 EOF
 }
@@ -36,10 +46,10 @@ remote_state {
   backend = "s3"
   config = {
     encrypt        = true
-    bucket         = "${get_env("TG_BUCKET_PREFIX", "")}terragrunt-example-tf-state-${local.account_name}-${local.aws_region}"
+    bucket         = "${get_env("TG_BUCKET_PREFIX", "lightwave-")}terraform-state-${local.account_name}-${local.aws_region}"
     key            = "${path_relative_to_include()}/tf.tfstate"
     region         = local.aws_region
-    dynamodb_table = "tf-locks"
+    dynamodb_table = "lightwave-terraform-locks"
   }
   generate = {
     path      = "backend.tf"
@@ -50,7 +60,7 @@ remote_state {
 # Configure what repositories to search when you run 'terragrunt catalog'
 catalog {
   urls = [
-    "https://github.com/gruntwork-io/terragrunt-infrastructure-catalog-example",
+    "git@github.com:lightwave-media/lightwave-infrastructure-catalog.git",
     "https://github.com/gruntwork-io/terraform-aws-utilities",
     "https://github.com/gruntwork-io/terraform-kubernetes-namespace"
   ]

@@ -1,0 +1,72 @@
+name: Cleanup Test Resources
+
+on:
+  schedule:
+    - cron: '0 3 * * *'  # Daily at 3 AM UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (preview what would be deleted)'
+        required: false
+        default: 'true'
+      older_than:
+        description: 'Delete resources older than (e.g., 24h, 7d)'
+        required: false
+        default: '24h'
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  cleanup-nonprod:
+    name: Cleanup Non-Prod Resources
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install cloud-nuke
+        run: |
+          wget -q https://github.com/gruntwork-io/cloud-nuke/releases/download/v0.33.0/cloud-nuke_linux_amd64
+          chmod +x cloud-nuke_linux_amd64
+          sudo mv cloud-nuke_linux_amd64 /usr/local/bin/cloud-nuke
+          cloud-nuke --version
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Cleanup resources (dry-run)
+        if: github.event.inputs.dry_run == 'true' || github.event_name == 'schedule'
+        run: |
+          cloud-nuke aws \
+            --region ${{ env.AWS_REGION }} \
+            --older-than ${{ github.event.inputs.older_than || '24h' }} \
+            --resource-type ec2,ecs,lambda,s3,rds,elb,ebs,ami,snapshot \
+            --exclude-resource-type iam \
+            --dry-run
+        env:
+          DISABLE_TELEMETRY: true
+
+      - name: Cleanup resources (actual deletion)
+        if: github.event.inputs.dry_run == 'false'
+        run: |
+          cloud-nuke aws \
+            --region ${{ env.AWS_REGION }} \
+            --older-than ${{ github.event.inputs.older_than || '24h' }} \
+            --resource-type ec2,ecs,lambda,s3,rds,elb,ebs,ami,snapshot \
+            --exclude-resource-type iam \
+            --force
+        env:
+          DISABLE_TELEMETRY: true
+
+      - name: Post cleanup summary
+        if: always()
+        run: |
+          echo "### Cleanup Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region**: ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Older than**: ${{ github.event.inputs.older_than || '24h' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Dry run**: ${{ github.event.inputs.dry_run || 'true' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Cleanup completed successfully" >> $GITHUB_STEP_SUMMARY
