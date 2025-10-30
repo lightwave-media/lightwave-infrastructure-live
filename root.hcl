@@ -38,6 +38,13 @@ provider "aws" {
     }
   }
 }
+
+# Cloudflare provider (for DNS management)
+# Requires CLOUDFLARE_API_TOKEN environment variable
+provider "cloudflare" {
+  # Authentication via API token (set via CLOUDFLARE_API_TOKEN env var)
+  # Do NOT hardcode API tokens in configuration files
+}
 EOF
 }
 

@@ -68,7 +68,7 @@ unit "redis" {
 
     # Production settings
     environment                = local.environment
-    num_cache_clusters         = 2  # 1 primary + 1 replica
+    num_cache_clusters         = 2 # 1 primary + 1 replica
     automatic_failover_enabled = true
     multi_az_enabled           = true
 
@@ -93,7 +93,7 @@ unit "django_service" {
 
   values = {
     name               = local.name
-    desired_count      = 2  # Production: 2 containers for HA
+    desired_count      = 2 # Production: 2 containers for HA
     cpu                = 512
     memory             = 1024
     ecr_repository_url = get_env("ECR_REPOSITORY_URL")
@@ -139,18 +139,18 @@ unit "cloudflare_dns" {
 
   values = {
     # DNS configuration
-    zone_id      = get_env("CLOUDFLARE_ZONE_ID")
-    record_name  = "api"  # Creates api.lightwave-media.ltd
-    record_type  = "CNAME"
-    target       = get_env("ALB_DNS_NAME")  # From Django service output
-    ttl          = 1  # Auto (Cloudflare proxy)
-    proxied      = true  # Enable Cloudflare proxy (DDoS, SSL, caching)
+    zone_id     = get_env("CLOUDFLARE_ZONE_ID")
+    record_name = "api" # Creates api.lightwave-media.ltd
+    record_type = "CNAME"
+    target      = get_env("ALB_DNS_NAME") # From Django service output
+    ttl         = 1                       # Auto (Cloudflare proxy)
+    proxied     = true                    # Enable Cloudflare proxy (DDoS, SSL, caching)
 
     # Security
     security_level = "medium"
 
     # SSL/TLS
-    ssl_mode = "full"  # Full SSL
+    ssl_mode = "full" # Full SSL
 
     # Caching
     cache_level = "standard"

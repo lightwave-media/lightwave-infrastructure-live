@@ -1,0 +1,394 @@
+name: Terragrunt Plan (PR)
+
+# This workflow runs on pull requests to show infrastructure changes
+# before they are applied. It posts the plan output as a PR comment.
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'non-prod/**'
+      - 'prod/**'
+      - 'root.hcl'
+      - '*.hcl'
+      - '.github/workflows/terragrunt-plan.yml'
+
+permissions:
+  contents: read
+  pull-requests: write  # Required for PR comments
+  id-token: write       # Required for AWS OIDC
+
+env:
+  TG_BUCKET_PREFIX: lightwave-
+  TERRAGRUNT_VERSION: 0.82.3
+  OPENTOFU_VERSION: 1.9.0
+  AWS_REGION: us-east-1
+
+jobs:
+  detect-changes:
+    name: Detect Changed Environments
+    runs-on: ubuntu-latest
+    outputs:
+      non_prod_changed: ${{ steps.detect.outputs.non_prod_changed }}
+      prod_changed: ${{ steps.detect.outputs.prod_changed }}
+      changed_files: ${{ steps.detect.outputs.changed_files }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for accurate diff
+
+      - name: Detect changed environments
+        id: detect
+        run: |
+          # Get list of changed files
+          CHANGED_FILES=$(git diff --name-only origin/main...HEAD)
+          echo "changed_files<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGED_FILES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          # Check if non-prod changed
+          if echo "$CHANGED_FILES" | grep -q "^non-prod/"; then
+            echo "non_prod_changed=true" >> $GITHUB_OUTPUT
+            echo "✅ Non-prod changes detected"
+          else
+            echo "non_prod_changed=false" >> $GITHUB_OUTPUT
+            echo "⏭️  No non-prod changes"
+          fi
+
+          # Check if prod changed
+          if echo "$CHANGED_FILES" | grep -q "^prod/"; then
+            echo "prod_changed=true" >> $GITHUB_OUTPUT
+            echo "✅ Production changes detected"
+          else
+            echo "prod_changed=false" >> $GITHUB_OUTPUT
+            echo "⏭️  No production changes"
+          fi
+
+  verify-remote-state:
+    name: Verify Remote State (${{ matrix.environment }})
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: |
+      (matrix.environment == 'non-prod' && needs.detect-changes.outputs.non_prod_changed == 'true') ||
+      (matrix.environment == 'prod' && needs.detect-changes.outputs.prod_changed == 'true')
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [non-prod, prod]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_GITHUB_ACTIONS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-VerifyState-${{ matrix.environment }}
+
+      - name: Verify remote state
+        run: |
+          chmod +x scripts/verify-remote-state.sh
+          ./scripts/verify-remote-state.sh ${{ matrix.environment }} ${{ env.AWS_REGION }}
+
+  plan-non-prod:
+    name: Plan Non-Prod Infrastructure
+    runs-on: ubuntu-latest
+    needs: [detect-changes, verify-remote-state]
+    if: needs.detect-changes.outputs.non_prod_changed == 'true'
+    environment:
+      name: non-prod-plan
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: ${{ env.OPENTOFU_VERSION }}
+
+      - name: Setup Terragrunt
+        run: |
+          wget -q https://github.com/gruntwork-io/terragrunt/releases/download/v${{ env.TERRAGRUNT_VERSION }}/terragrunt_linux_amd64
+          chmod +x terragrunt_linux_amd64
+          sudo mv terragrunt_linux_amd64 /usr/local/bin/terragrunt
+          terragrunt --version
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_GITHUB_ACTIONS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-PlanNonProd
+
+      - name: Terragrunt Plan (Non-Prod)
+        id: plan
+        working-directory: non-prod/us-east-1
+        run: |
+          set +e  # Don't exit on error, we want to capture output
+
+          # Run plan and capture output
+          terragrunt run-all plan \
+            --terragrunt-non-interactive \
+            --terragrunt-out-dir /tmp/plans \
+            2>&1 | tee /tmp/plan-output.txt
+
+          PLAN_EXIT_CODE=${PIPESTATUS[0]}
+
+          # Save plan output for comment
+          echo "plan_output<<EOF" >> $GITHUB_OUTPUT
+          cat /tmp/plan-output.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          # Set exit code for job status
+          echo "exit_code=$PLAN_EXIT_CODE" >> $GITHUB_OUTPUT
+
+          exit $PLAN_EXIT_CODE
+        env:
+          TG_BUCKET_PREFIX: ${{ env.TG_BUCKET_PREFIX }}
+
+      - name: Post plan result to PR (Non-Prod)
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const output = `### Terragrunt Plan Results - Non-Prod 🏗️
+
+            #### Status: ${{ steps.plan.outputs.exit_code == '0' && '✅ Success' || '❌ Failed' }}
+
+            <details>
+            <summary>📋 Show Plan Output</summary>
+
+            \`\`\`terraform
+            ${{ steps.plan.outputs.plan_output }}
+            \`\`\`
+
+            </details>
+
+            **Environment:** \`non-prod\`
+            **Region:** \`us-east-1\`
+            **Triggered by:** @${{ github.actor }}
+            **Commit:** ${{ github.sha }}
+
+            ---
+            *This comment will be automatically updated on new commits.*
+            `;
+
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(comment =>
+              comment.user.type === 'Bot' &&
+              comment.body.includes('Terragrunt Plan Results - Non-Prod')
+            );
+
+            // Create or update comment
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: output
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: output
+              });
+            }
+
+  plan-prod:
+    name: Plan Production Infrastructure
+    runs-on: ubuntu-latest
+    needs: [detect-changes, verify-remote-state]
+    if: needs.detect-changes.outputs.prod_changed == 'true'
+    environment:
+      name: prod-plan
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: ${{ env.OPENTOFU_VERSION }}
+
+      - name: Setup Terragrunt
+        run: |
+          wget -q https://github.com/gruntwork-io/terragrunt/releases/download/v${{ env.TERRAGRUNT_VERSION }}/terragrunt_linux_amd64
+          chmod +x terragrunt_linux_amd64
+          sudo mv terragrunt_linux_amd64 /usr/local/bin/terragrunt
+          terragrunt --version
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_GITHUB_ACTIONS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-PlanProd
+
+      - name: Terragrunt Plan (Production)
+        id: plan
+        working-directory: prod/us-east-1
+        run: |
+          set +e  # Don't exit on error, we want to capture output
+
+          # Run plan and capture output
+          terragrunt run-all plan \
+            --terragrunt-non-interactive \
+            --terragrunt-out-dir /tmp/plans \
+            2>&1 | tee /tmp/plan-output.txt
+
+          PLAN_EXIT_CODE=${PIPESTATUS[0]}
+
+          # Save plan output for comment
+          echo "plan_output<<EOF" >> $GITHUB_OUTPUT
+          cat /tmp/plan-output.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          # Set exit code for job status
+          echo "exit_code=$PLAN_EXIT_CODE" >> $GITHUB_OUTPUT
+
+          exit $PLAN_EXIT_CODE
+        env:
+          TG_BUCKET_PREFIX: ${{ env.TG_BUCKET_PREFIX }}
+
+      - name: Check for dangerous operations (Production)
+        id: check_dangerous
+        run: |
+          # Check for resource destroys or replacements
+          if grep -q "will be destroyed\|must be replaced\|Plan: .* to destroy" /tmp/plan-output.txt; then
+            echo "⚠️  WARNING: Detected resource destroys or replacements in production!"
+            echo "has_dangerous_ops=true" >> $GITHUB_OUTPUT
+
+            # Extract dangerous operations
+            echo "dangerous_ops<<EOF" >> $GITHUB_OUTPUT
+            grep -A 2 "will be destroyed\|must be replaced" /tmp/plan-output.txt >> $GITHUB_OUTPUT || true
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "✅ No dangerous operations detected"
+            echo "has_dangerous_ops=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Post plan result to PR (Production)
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const hasDangerousOps = '${{ steps.check_dangerous.outputs.has_dangerous_ops }}' === 'true';
+            const dangerousOpsWarning = hasDangerousOps ? `
+
+            ### ⚠️ CRITICAL WARNING ⚠️
+
+            This plan includes **DESTRUCTIVE OPERATIONS** that will destroy or replace resources:
+
+            \`\`\`
+            ${{ steps.check_dangerous.outputs.dangerous_ops }}
+            \`\`\`
+
+            **Review this plan carefully before approving!**
+            ` : '';
+
+            const output = `### Terragrunt Plan Results - Production 🚨
+
+            #### Status: ${{ steps.plan.outputs.exit_code == '0' && '✅ Success' || '❌ Failed' }}
+            ${dangerousOpsWarning}
+
+            <details>
+            <summary>📋 Show Plan Output</summary>
+
+            \`\`\`terraform
+            ${{ steps.plan.outputs.plan_output }}
+            \`\`\`
+
+            </details>
+
+            **Environment:** \`production\` 🚨
+            **Region:** \`us-east-1\`
+            **Triggered by:** @${{ github.actor }}
+            **Commit:** ${{ github.sha }}
+
+            ---
+            ⚠️ **Production deployment requires manual approval after merge**
+
+            *This comment will be automatically updated on new commits.*
+            `;
+
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(comment =>
+              comment.user.type === 'Bot' &&
+              comment.body.includes('Terragrunt Plan Results - Production')
+            );
+
+            // Create or update comment
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: output
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: output
+              });
+            }
+
+  summary:
+    name: Plan Summary
+    runs-on: ubuntu-latest
+    needs: [detect-changes, plan-non-prod, plan-prod]
+    if: always()
+    steps:
+      - name: Generate summary
+        run: |
+          echo "## 📊 Terragrunt Plan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [[ "${{ needs.detect-changes.outputs.non_prod_changed }}" == "true" ]]; then
+            if [[ "${{ needs.plan-non-prod.result }}" == "success" ]]; then
+              echo "✅ **Non-Prod:** Plan succeeded" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "❌ **Non-Prod:** Plan failed" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "⏭️  **Non-Prod:** No changes detected" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [[ "${{ needs.detect-changes.outputs.prod_changed }}" == "true" ]]; then
+            if [[ "${{ needs.plan-prod.result }}" == "success" ]]; then
+              echo "✅ **Production:** Plan succeeded (requires manual approval for apply)" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "❌ **Production:** Plan failed" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "⏭️  **Production:** No changes detected" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "👀 **Next Steps:**" >> $GITHUB_STEP_SUMMARY
+          echo "- Review the plan output in PR comments" >> $GITHUB_STEP_SUMMARY
+          echo "- Request review from infrastructure team" >> $GITHUB_STEP_SUMMARY
+          echo "- After approval and merge, changes will be applied automatically (non-prod) or require manual approval (prod)" >> $GITHUB_STEP_SUMMARY

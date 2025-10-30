@@ -1,0 +1,11 @@
+{
+  "environment": "non-prod",
+  "timestamp": "20251029-084323",
+  "backup_date": "2025-10-29T15:43:23Z",
+  "aws_profile": "lightwave-admin-new",
+  "aws_account": "738605694078",
+  "modules_total": 0,
+  "states_backed_up": 0,
+  "states_skipped": 0,
+  "states_failed": 0
+}
