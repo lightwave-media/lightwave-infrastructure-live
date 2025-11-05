@@ -12,6 +12,13 @@ REGION=${2:-us-east-1}
 BUCKET="lightwave-terraform-state-${ENVIRONMENT}-${REGION}"
 TABLE="lightwave-terraform-locks"
 
+# Detect if running in GitHub Actions (uses OIDC, no profile needed)
+if [ -n "${GITHUB_ACTIONS:-}" ]; then
+    AWS_CLI_ARGS=()
+else
+    AWS_CLI_ARGS=("--profile" "${AWS_PROFILE}")
+fi
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -30,8 +37,8 @@ echo "========================================="
 echo ""
 
 # Verify AWS credentials
-if ! aws sts get-caller-identity --profile "${AWS_PROFILE}" > /dev/null 2>&1; then
-    echo -e "${RED}❌ Failed to authenticate with AWS profile: ${AWS_PROFILE}${NC}"
+if ! aws sts get-caller-identity "${AWS_CLI_ARGS[@]}" > /dev/null 2>&1; then
+    echo -e "${RED}❌ Failed to authenticate with AWS${NC}"
     echo "Please verify your AWS credentials are configured correctly."
     exit 1
 fi
@@ -41,11 +48,11 @@ echo -e "${GREEN}✅ AWS credentials verified${NC}"
 # Check S3 bucket
 echo ""
 echo "Checking S3 bucket..."
-if aws s3 ls "s3://${BUCKET}" --profile "${AWS_PROFILE}" > /dev/null 2>&1; then
+if aws s3 ls "s3://${BUCKET}" "${AWS_CLI_ARGS[@]}" > /dev/null 2>&1; then
     echo -e "${GREEN}✅ S3 bucket accessible: ${BUCKET}${NC}"
 
     # Check versioning
-    VERSIONING=$(aws s3api get-bucket-versioning --bucket "${BUCKET}" --profile "${AWS_PROFILE}" --query 'Status' --output text 2>/dev/null || echo "Disabled")
+    VERSIONING=$(aws s3api get-bucket-versioning --bucket "${BUCKET}" "${AWS_CLI_ARGS[@]}" --query 'Status' --output text 2>/dev/null || echo "Disabled")
     if [ "${VERSIONING}" == "Enabled" ]; then
         echo -e "${GREEN}✅ S3 versioning enabled${NC}"
     else
@@ -61,10 +68,10 @@ fi
 # Check DynamoDB table
 echo ""
 echo "Checking DynamoDB lock table..."
-if aws dynamodb describe-table --table-name "${TABLE}" --profile "${AWS_PROFILE}" > /dev/null 2>&1; then
+if aws dynamodb describe-table --table-name "${TABLE}" "${AWS_CLI_ARGS[@]}" > /dev/null 2>&1; then
     echo -e "${GREEN}✅ DynamoDB lock table accessible: ${TABLE}${NC}"
 
-    TABLE_STATUS=$(aws dynamodb describe-table --table-name "${TABLE}" --profile "${AWS_PROFILE}" --query 'Table.TableStatus' --output text)
+    TABLE_STATUS=$(aws dynamodb describe-table --table-name "${TABLE}" "${AWS_CLI_ARGS[@]}" --query 'Table.TableStatus' --output text)
     if [ "${TABLE_STATUS}" == "ACTIVE" ]; then
         echo -e "${GREEN}✅ Table status: ACTIVE${NC}"
     else
@@ -82,7 +89,7 @@ echo "Checking for stale locks..."
 LOCK_COUNT=$(aws dynamodb scan \
     --table-name "${TABLE}" \
     --select COUNT \
-    --profile "${AWS_PROFILE}" \
+    "${AWS_CLI_ARGS[@]}" \
     --output text 2>/dev/null | awk '{print $2}' || echo "0")
 
 if [ "${LOCK_COUNT}" -gt 0 ]; then
