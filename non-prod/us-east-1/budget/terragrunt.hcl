@@ -1,6 +1,7 @@
 # ---------------------------------------------------------------------------------------------------------------------
 # TERRAGRUNT CONFIGURATION FOR NON-PROD BUDGET
 # Creates AWS Budget with alerts for non-production environments (dev + staging)
+# Test comment: Verifying terragrunt-plan workflow functionality
 # ---------------------------------------------------------------------------------------------------------------------
 
 terraform {
