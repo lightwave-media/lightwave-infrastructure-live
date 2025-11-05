@@ -59,9 +59,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: plan
     if: github.event.inputs.destroy != 'true'
-    environment:
-      name: non-prod
-      url: https://console.aws.amazon.com/
 
     steps:
       - name: Checkout code
@@ -99,8 +96,6 @@ jobs:
     name: Terragrunt Destroy
     runs-on: ubuntu-latest
     if: github.event.inputs.destroy == 'true'
-    environment:
-      name: non-prod-destroy
 
     steps:
       - name: Checkout code

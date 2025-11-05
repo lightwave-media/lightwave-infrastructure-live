@@ -21,9 +21,6 @@ jobs:
   deploy:
     name: Terragrunt ${{ github.event.inputs.action }}
     runs-on: ubuntu-latest
-    environment:
-      name: production
-      url: https://console.aws.amazon.com/
 
     steps:
       - name: Checkout code
