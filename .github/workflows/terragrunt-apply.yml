@@ -110,6 +110,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Configure Git for Terragrunt
+        run: |
+          git config --global url."https://oauth2:${{ secrets.INFRASTRUCTURE_CATALOG_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -132,6 +136,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Configure Git for Terragrunt
+        run: |
+          git config --global url."https://oauth2:${{ secrets.INFRASTRUCTURE_CATALOG_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
       - name: Setup OpenTofu
         uses: opentofu/setup-opentofu@v1
@@ -175,6 +183,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Configure Git for Terragrunt
+        run: |
+          git config --global url."https://oauth2:${{ secrets.INFRASTRUCTURE_CATALOG_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
       - name: Setup OpenTofu
         uses: opentofu/setup-opentofu@v1
@@ -252,6 +264,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Configure Git for Terragrunt
+        run: |
+          git config --global url."https://oauth2:${{ secrets.INFRASTRUCTURE_CATALOG_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -274,6 +290,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Configure Git for Terragrunt
+        run: |
+          git config --global url."https://oauth2:${{ secrets.INFRASTRUCTURE_CATALOG_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
       - name: Setup OpenTofu
         uses: opentofu/setup-opentofu@v1
@@ -365,6 +385,10 @@ jobs:
 
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Configure Git for Terragrunt
+        run: |
+          git config --global url."https://oauth2:${{ secrets.INFRASTRUCTURE_CATALOG_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
       - name: Setup OpenTofu
         uses: opentofu/setup-opentofu@v1

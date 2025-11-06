@@ -24,7 +24,7 @@ locals {
 # PostgreSQL Database
 # -----------------------------------------------------------------------------
 unit "postgresql" {
-  source = "git::git@github.com:lightwave-media/lightwave-infrastructure-catalog.git//units/postgresql?ref=main"
+  source = "git::https://github.com/lightwave-media/lightwave-infrastructure-catalog.git//units/postgresql?ref=main"
   path   = "postgresql"
 
   values = {
@@ -58,7 +58,7 @@ unit "postgresql" {
 # Redis ElastiCache
 # -----------------------------------------------------------------------------
 unit "redis" {
-  source = "git::git@github.com:lightwave-media/lightwave-infrastructure-catalog.git//units/redis?ref=main"
+  source = "git::https://github.com/lightwave-media/lightwave-infrastructure-catalog.git//units/redis?ref=main"
   path   = "redis"
 
   values = {
@@ -88,7 +88,7 @@ unit "redis" {
 # Django ECS Fargate Service
 # -----------------------------------------------------------------------------
 unit "django_service" {
-  source = "git::git@github.com:lightwave-media/lightwave-infrastructure-catalog.git//units/django-fargate-stateful-service?ref=main"
+  source = "git::https://github.com/lightwave-media/lightwave-infrastructure-catalog.git//units/django-fargate-stateful-service?ref=main"
   path   = "django"
 
   values = {
@@ -134,7 +134,7 @@ unit "django_service" {
 # Cloudflare DNS
 # -----------------------------------------------------------------------------
 unit "cloudflare_dns" {
-  source = "git::git@github.com:lightwave-media/lightwave-infrastructure-catalog.git//units/cloudflare-dns?ref=main"
+  source = "git::https://github.com/lightwave-media/lightwave-infrastructure-catalog.git//units/cloudflare-dns?ref=main"
   path   = "cloudflare"
 
   values = {
