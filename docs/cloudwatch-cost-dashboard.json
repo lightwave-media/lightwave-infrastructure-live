@@ -1,0 +1,255 @@
+{
+  "widgets": [
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 0,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/Billing", "EstimatedCharges", { "stat": "Maximum", "label": "Total Estimated Charges" } ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Total Estimated Monthly Charges",
+        "period": 21600,
+        "yAxis": {
+          "left": {
+            "label": "USD",
+            "showUnits": false
+          }
+        },
+        "annotations": {
+          "horizontal": [
+            {
+              "label": "Production Budget ($500)",
+              "value": 500,
+              "fill": "above",
+              "color": "#d62728"
+            },
+            {
+              "label": "Non-Prod Budget ($150)",
+              "value": 150,
+              "fill": "above",
+              "color": "#ff7f0e"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 0,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/Billing", "EstimatedCharges", { "stat": "Maximum" } ]
+        ],
+        "view": "singleValue",
+        "region": "us-east-1",
+        "title": "Current Month-to-Date Total",
+        "period": 21600,
+        "setPeriodToTimeRange": true
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 6,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/RDS", "CPUUtilization", { "stat": "Average" } ],
+          [ ".", "DatabaseConnections", { "stat": "Average", "yAxis": "right" } ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "RDS Utilization (Cost Driver #1)",
+        "period": 300,
+        "yAxis": {
+          "left": {
+            "label": "CPU %",
+            "showUnits": false
+          },
+          "right": {
+            "label": "Connections",
+            "showUnits": false
+          }
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 8,
+      "y": 6,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/ECS", "CPUUtilization", { "stat": "Average" } ],
+          [ ".", "MemoryUtilization", { "stat": "Average" } ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "ECS Fargate Utilization (Cost Driver #2)",
+        "period": 300,
+        "yAxis": {
+          "left": {
+            "label": "Utilization %",
+            "showUnits": false
+          }
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 16,
+      "y": 6,
+      "width": 8,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/ElastiCache", "CPUUtilization", { "stat": "Average" } ],
+          [ ".", "NetworkBytesIn", { "stat": "Sum", "yAxis": "right" } ],
+          [ ".", "NetworkBytesOut", { "stat": "Sum", "yAxis": "right" } ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "ElastiCache Utilization",
+        "period": 300,
+        "yAxis": {
+          "left": {
+            "label": "CPU %",
+            "showUnits": false
+          },
+          "right": {
+            "label": "Bytes",
+            "showUnits": false
+          }
+        }
+      }
+    },
+    {
+      "type": "log",
+      "x": 0,
+      "y": 12,
+      "width": 24,
+      "height": 6,
+      "properties": {
+        "query": "SOURCE '/aws/lambda/cost-anomaly-detector'\n| fields @timestamp, @message\n| filter @message like /ANOMALY/\n| sort @timestamp desc\n| limit 20",
+        "region": "us-east-1",
+        "title": "Recent Cost Anomalies",
+        "stacked": false
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 18,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/S3", "BucketSizeBytes", "StorageType", "StandardStorage", { "stat": "Average" } ],
+          [ "...", "IntelligentTieringFAStorage", { "stat": "Average" } ],
+          [ "...", "GlacierStorage", { "stat": "Average" } ]
+        ],
+        "view": "timeSeries",
+        "stacked": true,
+        "region": "us-east-1",
+        "title": "S3 Storage by Tier",
+        "period": 86400,
+        "yAxis": {
+          "left": {
+            "label": "Bytes",
+            "showUnits": false
+          }
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 18,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/ApplicationELB", "RequestCount", { "stat": "Sum" } ],
+          [ ".", "TargetResponseTime", { "stat": "Average", "yAxis": "right" } ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Load Balancer Usage",
+        "period": 300,
+        "yAxis": {
+          "left": {
+            "label": "Requests",
+            "showUnits": false
+          },
+          "right": {
+            "label": "Response Time (ms)",
+            "showUnits": false
+          }
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 24,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/EC2", "NetworkIn", { "stat": "Sum" } ],
+          [ ".", "NetworkOut", { "stat": "Sum" } ]
+        ],
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "title": "Data Transfer (Potential Cost Driver)",
+        "period": 3600,
+        "yAxis": {
+          "left": {
+            "label": "Bytes",
+            "showUnits": false
+          }
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 24,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "metrics": [
+          [ "AWS/EBS", "VolumeReadBytes", { "stat": "Sum" } ],
+          [ ".", "VolumeWriteBytes", { "stat": "Sum" } ]
+        ],
+        "view": "timeSeries",
+        "stacked": true,
+        "region": "us-east-1",
+        "title": "EBS Volume I/O",
+        "period": 3600,
+        "yAxis": {
+          "left": {
+            "label": "Bytes",
+            "showUnits": false
+          }
+        }
+      }
+    }
+  ]
+}

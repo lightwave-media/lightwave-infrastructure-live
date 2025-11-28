@@ -110,6 +110,91 @@ The following conventions are some best practices for an `infrastructure-live` r
 - Avoid using [OpenTofu/Terraform Workspaces](https://opentofu.org/docs/language/state/workspaces/). Instead, use [Terragrunt units](https://terragrunt.gruntwork.io/docs/getting-started/terminology/#unit) to isolate state.
 - Use [Stacks](https://terragrunt.gruntwork.io/docs/getting-started/terminology/#stack) to organize your infrastructure into logical collections of units.
 
+## CI/CD Pipeline
+
+This repository includes GitHub Actions workflows for automated infrastructure deployment following Gruntwork best practices:
+
+### Workflows
+
+- **terragrunt-plan.yml** - Runs on pull requests to show infrastructure changes before they are applied
+  - Automatically detects which environments changed (non-prod vs prod)
+  - Runs `terragrunt plan` for each affected environment
+  - Posts plan output as PR comments with formatted diff
+  - Checks for dangerous operations (destroys/replacements) in production
+  - Verifies remote state health before planning
+
+- **terragrunt-apply.yml** - Runs after merge to main with environment-specific behavior
+  - **Non-Prod:** Auto-applies changes after successful plan (30 second wait timer)
+  - **Production:** Requires manual approval from infrastructure team
+  - Verifies remote state health before deployment
+  - Runs smoke tests after successful deployment
+  - Backs up production state before making changes
+  - Provides rollback instructions on failure
+
+### Setup
+
+To enable the CI/CD pipeline:
+
+1. **Configure AWS OIDC authentication** (one-time setup):
+   ```bash
+   # Automated setup
+   ./scripts/setup-github-oidc.sh lightwave-media lightwave-infrastructure-live
+
+   # Or follow the manual guide
+   # See docs/GITHUB_ACTIONS_SETUP.md for detailed instructions
+   ```
+
+2. **Add GitHub repository secret:**
+   - Name: `AWS_GITHUB_ACTIONS_ROLE_ARN`
+   - Value: IAM role ARN from setup script output
+
+3. **Configure GitHub Environments:**
+   - `non-prod-plan` - No protection rules
+   - `non-prod` - 30 second wait timer
+   - `prod-plan` - No protection rules
+   - `production` - Requires manual approval from infrastructure team
+
+4. **Enable branch protection on `main`:**
+   - Require PR reviews before merging
+   - Require status checks to pass (plan workflows)
+   - Require conversation resolution
+
+### Using the Pipeline
+
+**Making infrastructure changes:**
+
+1. Create a feature branch:
+   ```bash
+   git checkout -b feature/infrastructure/add-read-replica
+   ```
+
+2. Make changes to infrastructure code in `non-prod/` or `prod/`
+
+3. Push and create a pull request:
+   ```bash
+   git push origin feature/infrastructure/add-read-replica
+   ```
+
+4. Review the automated plan output in PR comments
+
+5. After approval, merge to `main`:
+   - Non-prod changes: Deploy automatically after 30 seconds
+   - Production changes: Require manual approval in GitHub Actions
+
+**Monitoring deployments:**
+
+- Check GitHub Actions logs for real-time deployment status
+- Review deployment summaries in the Actions tab
+- Smoke tests run automatically after successful deployments
+
+**Emergency procedures:**
+
+- See `docs/GITHUB_ACTIONS_SETUP.md` for troubleshooting
+- Rollback instructions provided automatically on deployment failures
+- State backups created before production deployments
+
+For detailed setup instructions, see [docs/GITHUB_ACTIONS_SETUP.md](docs/GITHUB_ACTIONS_SETUP.md).
+
 ## How to provision the infrastructure in this repository
 
 ### Setup
@@ -340,6 +425,62 @@ unit "service" {
 ```
 
 Here, you can see that the `values` attribute is setting exactly the values that are unique to the `service` unit in the context of the `stateful-ec2-asg-service` stack, including the `version` of the OpenTofu module it uses, and the relative paths to the dependencies it relies on (e.g. the `db` and `asg_sg` units).
+
+## Drift Detection and Monitoring
+
+This repository includes automated infrastructure drift detection to identify when live AWS resources differ from Terraform state.
+
+### Automated Drift Detection
+
+Drift detection runs automatically:
+- **Schedule:** Daily at 6am UTC
+- **Environments:** Non-prod and production
+- **Notifications:** GitHub Issues (critical drift), Slack alerts, workflow artifacts
+
+### Manual Drift Detection
+
+Run drift detection locally:
+
+```bash
+# Set AWS profile
+export AWS_PROFILE=lightwave-admin-new
+
+# Detect drift in non-prod
+make detect-drift-nonprod
+
+# Detect drift in production
+make detect-drift-prod
+
+# Detect drift in all environments
+make detect-drift-all
+```
+
+### Drift Reports
+
+Drift reports are generated in multiple formats:
+- **JSON:** Machine-readable format for automation
+- **Markdown:** Human-readable format with recommendations
+- **Text:** Console-friendly format
+
+Reports are saved to `drift-reports/` and retained as GitHub Actions artifacts for 90 days.
+
+### Remediation Guidance
+
+Get automated remediation suggestions:
+
+```bash
+# Find latest drift report
+LATEST=$(ls -t drift-reports/*.json | head -1)
+
+# Get remediation suggestions
+make suggest-remediation DRIFT_REPORT="${LATEST}"
+```
+
+### Documentation
+
+- **Quick Start:** [docs/DRIFT_DETECTION_QUICKSTART.md](docs/DRIFT_DETECTION_QUICKSTART.md)
+- **Full SOP:** [docs/SOP_DRIFT_DETECTION.md](docs/SOP_DRIFT_DETECTION.md)
+- **Deployment Procedures:** [docs/SOP_INFRASTRUCTURE_DEPLOYMENT.md](docs/SOP_INFRASTRUCTURE_DEPLOYMENT.md)
 
 ## What to do with `.terraform.lock.hcl` files
 

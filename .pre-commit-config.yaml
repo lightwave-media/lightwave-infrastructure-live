@@ -1,4 +1,5 @@
 repos:
+  # Terraform/Terragrunt formatting and validation
   - repo: https://github.com/gruntwork-io/pre-commit
     rev: v0.1.28
     hooks:
@@ -6,4 +7,53 @@ repos:
       - id: terraform-validate
       - id: terragrunt-hclfmt
       - id: tflint
+        args:
+          - --config=.tflint.hcl
       - id: shellcheck
+
+  # Secret scanning to prevent credential leaks
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+        exclude: package-lock.json
+
+  # Additional security checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: detect-private-key
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  # Cost estimation (requires Infracost API key)
+  - repo: local
+    hooks:
+      - id: infracost-diff
+        name: Infracost Cost Estimation
+        entry: bash -c 'if command -v infracost &> /dev/null; then infracost diff --path . --format json --out-file /tmp/infracost.json || true; fi'
+        language: system
+        pass_filenames: false
+        files: \.(tf|hcl)$
+
+      # Custom Terragrunt dependency validation
+      - id: terragrunt-validate-deps
+        name: Terragrunt Dependency Validation
+        entry: scripts/validate-terragrunt-deps.sh
+        language: script
+        files: \.hcl$
+        pass_filenames: false
+
+      # Validate secret references in Terragrunt files
+      - id: validate-secret-references
+        name: Validate Secret References
+        entry: scripts/validate-secret-references.sh
+        language: script
+        files: \.hcl$
+        pass_filenames: false
+        args: ['--no-aws-check']  # Skip AWS check in pre-commit for speed

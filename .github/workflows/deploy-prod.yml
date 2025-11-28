@@ -13,6 +13,10 @@ on:
           - apply
           - destroy
 
+permissions:
+  contents: read
+  id-token: write  # Required for AWS OIDC
+
 env:
   TG_BUCKET_PREFIX: lightwave-
   AWS_REGION: us-east-1
@@ -21,18 +25,19 @@ jobs:
   deploy:
     name: Terragrunt ${{ github.event.inputs.action }}
     runs-on: ubuntu-latest
-    environment:
-      name: production
-      url: https://console.aws.amazon.com/
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
+      - name: Configure Git for Terragrunt
+        run: |
+          git config --global url."https://oauth2:${{ secrets.INFRASTRUCTURE_CATALOG_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Setup OpenTofu
+        uses: opentofu/setup-opentofu@v1
         with:
-          terraform_version: '1.9.0'
+          tofu_version: '1.9.0'
 
       - name: Setup Terragrunt
         run: |
@@ -41,12 +46,12 @@ jobs:
           sudo mv terragrunt_linux_amd64 /usr/local/bin/terragrunt
           terragrunt --version
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ secrets.AWS_GITHUB_ACTIONS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-DeployProd-${{ github.event.inputs.action }}
 
       - name: Terragrunt ${{ github.event.inputs.action }}
         working-directory: prod/us-east-1

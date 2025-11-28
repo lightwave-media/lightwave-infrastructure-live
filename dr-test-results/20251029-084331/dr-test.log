@@ -1,0 +1,32 @@
+=========================================
+Disaster Recovery Test
+=========================================
+Environment:  non-prod
+Test Type:    backup
+Timestamp:    20251029-084331
+AWS Profile:  lightwave-admin-new
+Results Dir:  /Users/joelschaeffer/dev/lightwave-workspace/Infrastructure/lightwave-infrastructure-live/dr-test-results/20251029-084331
+=========================================
+
+
+=========================================
+Test: AWS Connectivity
+=========================================
+[0;34mℹ  Testing AWS connectivity...[0m
+[0;32m✅ AWS connectivity confirmed (Account: 738605694078)[0m
+[0;32m✅ AWS Connectivity passed[0m
+
+=========================================
+Test: S3 State Bucket
+=========================================
+[0;34mℹ  Testing S3 state bucket access...[0m
+[0;32m✅ S3 state bucket accessible: lightwave-terraform-state-non-prod-us-east-1[0m
+[0;32m✅ S3 versioning enabled on state bucket[0m
+[0;32m✅ S3 State Bucket passed[0m
+
+=========================================
+Test: DynamoDB Lock Table
+=========================================
+[0;34mℹ  Testing DynamoDB lock table...[0m
+[0;31m❌ Cannot access DynamoDB lock table: lightwave-terraform-locks-non-prod[0m
+[0;31m❌ DynamoDB Lock Table failed[0m

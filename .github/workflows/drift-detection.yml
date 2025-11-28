@@ -1,0 +1,471 @@
+name: Infrastructure Drift Detection
+
+# Scheduled drift detection runs daily at 6am UTC to detect manual changes
+# or configuration drift between Terraform state and live AWS resources.
+
+on:
+  schedule:
+    # Run daily at 6am UTC (10pm PST / 1am EST)
+    - cron: '0 6 * * *'
+
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to check (non-prod, prod, or all)'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - non-prod
+          - prod
+      output_format:
+        description: 'Report format'
+        required: false
+        default: 'markdown'
+        type: choice
+        options:
+          - markdown
+          - json
+          - text
+
+permissions:
+  contents: read
+  issues: write        # For creating GitHub issues on critical drift
+  id-token: write     # For AWS OIDC authentication
+
+env:
+  TG_BUCKET_PREFIX: lightwave-
+  TERRAGRUNT_VERSION: 0.82.3
+  OPENTOFU_VERSION: 1.9.0
+  AWS_REGION: us-east-1
+
+jobs:
+  drift-detection-nonprod:
+    name: Drift Detection - Non-Prod
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && (github.event.inputs.environment == 'all' || github.event.inputs.environment == 'non-prod'))
+
+    outputs:
+      drift_detected: ${{ steps.detect.outputs.drift_detected }}
+      drift_severity: ${{ steps.detect.outputs.drift_severity }}
+      total_changes: ${{ steps.detect.outputs.total_changes }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure Git for Terragrunt
+        run: |
+          git config --global url."https://oauth2:${{ secrets.INFRASTRUCTURE_CATALOG_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Setup OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: ${{ env.OPENTOFU_VERSION }}
+
+      - name: Setup Terragrunt
+        run: |
+          wget -q https://github.com/gruntwork-io/terragrunt/releases/download/v${{ env.TERRAGRUNT_VERSION }}/terragrunt_linux_amd64
+          chmod +x terragrunt_linux_amd64
+          sudo mv terragrunt_linux_amd64 /usr/local/bin/terragrunt
+          terragrunt --version
+
+      - name: Install jq (for JSON parsing)
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_GITHUB_ACTIONS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-DriftDetection-NonProd
+
+      - name: Run drift detection (Non-Prod)
+        id: detect
+        continue-on-error: true
+        run: |
+          chmod +x scripts/detect-drift.sh
+
+          # Set output format
+          OUTPUT_FORMAT="${{ github.event.inputs.output_format || 'markdown' }}"
+
+          # Run drift detection
+          set +e
+          ./scripts/detect-drift.sh non-prod us-east-1 "${OUTPUT_FORMAT}"
+          EXIT_CODE=$?
+          set -e
+
+          # Parse exit code
+          # 0 = no drift, 1 = error, 2 = drift detected, 3 = critical drift
+
+          if [[ ${EXIT_CODE} -eq 0 ]]; then
+            echo "drift_detected=false" >> $GITHUB_OUTPUT
+            echo "drift_severity=none" >> $GITHUB_OUTPUT
+            echo "total_changes=0" >> $GITHUB_OUTPUT
+          elif [[ ${EXIT_CODE} -eq 2 ]] || [[ ${EXIT_CODE} -eq 3 ]]; then
+            echo "drift_detected=true" >> $GITHUB_OUTPUT
+
+            # Find latest drift report
+            LATEST_REPORT=$(ls -t drift-reports/non-prod-us-east-1-drift-*.json 2>/dev/null | head -1)
+
+            if [[ -n "${LATEST_REPORT}" ]]; then
+              SEVERITY=$(jq -r '.drift_severity' "${LATEST_REPORT}")
+              TOTAL_CHANGES=$(jq -r '.summary.total_changes' "${LATEST_REPORT}")
+
+              echo "drift_severity=${SEVERITY}" >> $GITHUB_OUTPUT
+              echo "total_changes=${TOTAL_CHANGES}" >> $GITHUB_OUTPUT
+            else
+              echo "drift_severity=unknown" >> $GITHUB_OUTPUT
+              echo "total_changes=unknown" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "drift_detected=error" >> $GITHUB_OUTPUT
+            echo "drift_severity=error" >> $GITHUB_OUTPUT
+            echo "total_changes=0" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: Upload drift reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: drift-reports-nonprod
+          path: drift-reports/
+          retention-days: 90
+
+      - name: Create GitHub Issue for Critical Drift (Non-Prod)
+        if: steps.detect.outputs.drift_severity == 'critical'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+
+            // Find latest markdown report
+            const reports = fs.readdirSync('drift-reports')
+              .filter(f => f.includes('non-prod') && f.endsWith('.markdown'))
+              .sort()
+              .reverse();
+
+            let reportContent = 'See workflow artifacts for detailed report.';
+            if (reports.length > 0) {
+              reportContent = fs.readFileSync(`drift-reports/${reports[0]}`, 'utf8');
+            }
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '🚨 Critical Infrastructure Drift Detected - Non-Prod',
+              labels: ['infrastructure', 'drift-detection', 'critical', 'non-prod'],
+              body: `## Critical Infrastructure Drift Detected
+
+            **Environment:** Non-Prod
+            **Detected:** ${new Date().toISOString()}
+            **Workflow Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            ${reportContent}
+
+            ## Action Required
+
+            1. Review the drift report in the workflow artifacts
+            2. Investigate the source of changes (check CloudTrail)
+            3. Follow remediation procedures in docs/SOP_DRIFT_DETECTION.md
+            4. Update Terraform or revert manual changes
+            5. Close this issue once resolved
+
+            ---
+            *Automatically created by drift detection workflow*
+            `
+            });
+
+  drift-detection-prod:
+    name: Drift Detection - Production
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && (github.event.inputs.environment == 'all' || github.event.inputs.environment == 'prod'))
+
+    outputs:
+      drift_detected: ${{ steps.detect.outputs.drift_detected }}
+      drift_severity: ${{ steps.detect.outputs.drift_severity }}
+      total_changes: ${{ steps.detect.outputs.total_changes }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure Git for Terragrunt
+        run: |
+          git config --global url."https://oauth2:${{ secrets.INFRASTRUCTURE_CATALOG_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Setup OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: ${{ env.OPENTOFU_VERSION }}
+
+      - name: Setup Terragrunt
+        run: |
+          wget -q https://github.com/gruntwork-io/terragrunt/releases/download/v${{ env.TERRAGRUNT_VERSION }}/terragrunt_linux_amd64
+          chmod +x terragrunt_linux_amd64
+          sudo mv terragrunt_linux_amd64 /usr/local/bin/terragrunt
+          terragrunt --version
+
+      - name: Install jq (for JSON parsing)
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_GITHUB_ACTIONS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-DriftDetection-Prod
+
+      - name: Run drift detection (Production)
+        id: detect
+        continue-on-error: true
+        run: |
+          chmod +x scripts/detect-drift.sh
+
+          # Set output format
+          OUTPUT_FORMAT="${{ github.event.inputs.output_format || 'markdown' }}"
+
+          # Run drift detection
+          set +e
+          ./scripts/detect-drift.sh prod us-east-1 "${OUTPUT_FORMAT}"
+          EXIT_CODE=$?
+          set -e
+
+          # Parse exit code
+          if [[ ${EXIT_CODE} -eq 0 ]]; then
+            echo "drift_detected=false" >> $GITHUB_OUTPUT
+            echo "drift_severity=none" >> $GITHUB_OUTPUT
+            echo "total_changes=0" >> $GITHUB_OUTPUT
+          elif [[ ${EXIT_CODE} -eq 2 ]] || [[ ${EXIT_CODE} -eq 3 ]]; then
+            echo "drift_detected=true" >> $GITHUB_OUTPUT
+
+            # Find latest drift report
+            LATEST_REPORT=$(ls -t drift-reports/prod-us-east-1-drift-*.json 2>/dev/null | head -1)
+
+            if [[ -n "${LATEST_REPORT}" ]]; then
+              SEVERITY=$(jq -r '.drift_severity' "${LATEST_REPORT}")
+              TOTAL_CHANGES=$(jq -r '.summary.total_changes' "${LATEST_REPORT}")
+
+              echo "drift_severity=${SEVERITY}" >> $GITHUB_OUTPUT
+              echo "total_changes=${TOTAL_CHANGES}" >> $GITHUB_OUTPUT
+            else
+              echo "drift_severity=unknown" >> $GITHUB_OUTPUT
+              echo "total_changes=unknown" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "drift_detected=error" >> $GITHUB_OUTPUT
+            echo "drift_severity=error" >> $GITHUB_OUTPUT
+            echo "total_changes=0" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: Upload drift reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: drift-reports-prod
+          path: drift-reports/
+          retention-days: 90
+
+      - name: Create GitHub Issue for Critical Drift (Production)
+        if: steps.detect.outputs.drift_severity == 'critical'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+
+            // Find latest markdown report
+            const reports = fs.readdirSync('drift-reports')
+              .filter(f => f.includes('prod') && f.endsWith('.markdown'))
+              .sort()
+              .reverse();
+
+            let reportContent = 'See workflow artifacts for detailed report.';
+            if (reports.length > 0) {
+              reportContent = fs.readFileSync(`drift-reports/${reports[0]}`, 'utf8');
+            }
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '🚨 CRITICAL: Infrastructure Drift Detected - PRODUCTION',
+              labels: ['infrastructure', 'drift-detection', 'critical', 'production', 'urgent'],
+              body: `## 🚨 CRITICAL: Production Infrastructure Drift Detected
+
+            **Environment:** PRODUCTION
+            **Detected:** ${new Date().toISOString()}
+            **Workflow Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            ${reportContent}
+
+            ## IMMEDIATE ACTION REQUIRED
+
+            1. **URGENT:** Review the drift report in the workflow artifacts
+            2. Investigate the source of changes (check CloudTrail immediately)
+            3. Determine if production security is compromised
+            4. Follow remediation procedures in docs/SOP_DRIFT_DETECTION.md
+            5. Notify platform team lead
+            6. Update Terraform or revert manual changes ASAP
+            7. Document incident and prevention measures
+            8. Close this issue once fully resolved
+
+            ---
+            ⚠️ **This is a production issue requiring immediate attention**
+
+            *Automatically created by drift detection workflow*
+            `
+            });
+
+      - name: Send Slack notification for Production drift
+        if: steps.detect.outputs.drift_detected == 'true' && vars.SLACK_WEBHOOK_URL != ''
+        run: |
+          SEVERITY="${{ steps.detect.outputs.drift_severity }}"
+          TOTAL_CHANGES="${{ steps.detect.outputs.total_changes }}"
+
+          if [[ "${SEVERITY}" == "critical" ]]; then
+            EMOJI="🚨"
+            COLOR="danger"
+          elif [[ "${SEVERITY}" == "high" ]]; then
+            EMOJI="⚠️"
+            COLOR="warning"
+          else
+            EMOJI="ℹ️"
+            COLOR="warning"
+          fi
+
+          PAYLOAD=$(cat <<EOF
+          {
+            "text": "${EMOJI} Production Infrastructure Drift Detected",
+            "attachments": [
+              {
+                "color": "${COLOR}",
+                "fields": [
+                  {
+                    "title": "Environment",
+                    "value": "PRODUCTION",
+                    "short": true
+                  },
+                  {
+                    "title": "Severity",
+                    "value": "${SEVERITY^^}",
+                    "short": true
+                  },
+                  {
+                    "title": "Changes",
+                    "value": "${TOTAL_CHANGES}",
+                    "short": true
+                  },
+                  {
+                    "title": "Workflow",
+                    "value": "<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Details>",
+                    "short": true
+                  }
+                ]
+              }
+            ]
+          }
+          EOF
+          )
+
+          curl -X POST -H 'Content-type: application/json' \
+            --data "${PAYLOAD}" \
+            "${{ vars.SLACK_WEBHOOK_URL }}" || true
+
+  summary:
+    name: Drift Detection Summary
+    runs-on: ubuntu-latest
+    needs: [drift-detection-nonprod, drift-detection-prod]
+    if: always()
+
+    steps:
+      - name: Generate Summary
+        run: |
+          echo "# 📊 Infrastructure Drift Detection Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Date:** $(date -u +%Y-%m-%d\ %H:%M:%S\ UTC)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Non-Prod Summary
+          echo "## Non-Production" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [[ "${{ needs.drift-detection-nonprod.result }}" == "success" ]]; then
+            if [[ "${{ needs.drift-detection-nonprod.outputs.drift_detected }}" == "true" ]]; then
+              SEVERITY="${{ needs.drift-detection-nonprod.outputs.drift_severity }}"
+              CHANGES="${{ needs.drift-detection-nonprod.outputs.total_changes }}"
+
+              if [[ "${SEVERITY}" == "critical" ]]; then
+                echo "🚨 **Status:** Critical drift detected" >> $GITHUB_STEP_SUMMARY
+              elif [[ "${SEVERITY}" == "high" ]]; then
+                echo "⚠️ **Status:** High severity drift detected" >> $GITHUB_STEP_SUMMARY
+              else
+                echo "ℹ️ **Status:** Drift detected" >> $GITHUB_STEP_SUMMARY
+              fi
+
+              echo "- **Changes:** ${CHANGES}" >> $GITHUB_STEP_SUMMARY
+              echo "- **Severity:** ${SEVERITY^^}" >> $GITHUB_STEP_SUMMARY
+              echo "- **Action Required:** Review drift report artifacts" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "✅ **Status:** No drift detected" >> $GITHUB_STEP_SUMMARY
+            fi
+          elif [[ "${{ needs.drift-detection-nonprod.result }}" == "skipped" ]]; then
+            echo "⏭️ **Status:** Skipped" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Status:** Detection failed" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Production Summary
+          echo "## Production" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [[ "${{ needs.drift-detection-prod.result }}" == "success" ]]; then
+            if [[ "${{ needs.drift-detection-prod.outputs.drift_detected }}" == "true" ]]; then
+              SEVERITY="${{ needs.drift-detection-prod.outputs.drift_severity }}"
+              CHANGES="${{ needs.drift-detection-prod.outputs.total_changes }}"
+
+              if [[ "${SEVERITY}" == "critical" ]]; then
+                echo "🚨 **Status:** CRITICAL PRODUCTION DRIFT" >> $GITHUB_STEP_SUMMARY
+              elif [[ "${SEVERITY}" == "high" ]]; then
+                echo "⚠️ **Status:** High severity production drift" >> $GITHUB_STEP_SUMMARY
+              else
+                echo "ℹ️ **Status:** Production drift detected" >> $GITHUB_STEP_SUMMARY
+              fi
+
+              echo "- **Changes:** ${CHANGES}" >> $GITHUB_STEP_SUMMARY
+              echo "- **Severity:** ${SEVERITY^^}" >> $GITHUB_STEP_SUMMARY
+              echo "- **Action Required:** IMMEDIATE REVIEW REQUIRED" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "✅ **Status:** No drift detected" >> $GITHUB_STEP_SUMMARY
+            fi
+          elif [[ "${{ needs.drift-detection-prod.result }}" == "skipped" ]]; then
+            echo "⏭️ **Status:** Skipped" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Status:** Detection failed" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📁 Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Drift reports have been uploaded as workflow artifacts (retained for 90 days)." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📖 Documentation" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "For drift remediation procedures, see: \`docs/SOP_DRIFT_DETECTION.md\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "To run drift detection manually:" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "make detect-drift-nonprod" >> $GITHUB_STEP_SUMMARY
+          echo "make detect-drift-prod" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
