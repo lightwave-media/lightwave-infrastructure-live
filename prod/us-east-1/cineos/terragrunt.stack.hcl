@@ -224,8 +224,8 @@ unit "django_to_postgresql_rule" {
     protocol = "tcp"
 
     # Dependency paths - unit will resolve outputs automatically
-    source_path = "../django"
-    dest_path   = "../postgresql"
+    source_path = "../../django"
+    dest_path   = "../../postgresql"
   }
 }
 
@@ -239,8 +239,8 @@ unit "django_to_redis_rule" {
     protocol = "tcp"
 
     # Dependency paths - unit will resolve outputs automatically
-    source_path = "../django"
-    dest_path   = "../redis"
+    source_path = "../../django"
+    dest_path   = "../../redis"
   }
 }
 
