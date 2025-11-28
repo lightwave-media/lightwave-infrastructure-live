@@ -39,30 +39,15 @@ locals {
 # ECS Fargate containers are ephemeral - S3 provides durability
 
 # -----------------------------------------------------------------------------
-# VPC Endpoints (CRITICAL: Deploy FIRST for private subnet connectivity)
+# VPC Endpoints - ALREADY EXIST (created manually)
 # -----------------------------------------------------------------------------
-unit "vpc_endpoints" {
-  source = "git::https://github.com/lightwave-media/lightwave-infrastructure-catalog.git//units/vpc-endpoints?ref=feature/prod-bootstrap-initial-deployment"
-  path   = "vpc-endpoints"
-
-  values = {
-    version                 = "feature/prod-bootstrap-initial-deployment"
-    name                    = local.name
-    vpc_id                  = get_env("VPC_ID")
-    vpc_cidr                = "10.1.0.0/16"
-    private_subnet_ids      = [get_env("PRIVATE_SUBNET_IDS")]
-    private_route_table_ids = ["rtb-02b15726e674339cd"]
-
-    environment = local.environment
-    aws_region  = get_env("AWS_REGION", "us-east-1")
-
-    # Enable all endpoints needed for ECS Fargate in private subnets
-    enable_secretsmanager = true # Pull Django secrets
-    enable_ecr            = true # Pull Docker images
-    enable_s3             = true # ECR image layers (gateway, FREE)
-    enable_logs           = true # Send CloudWatch Logs
-  }
-}
+# NOTE: VPC endpoints already exist in vpc-02f48c62006cacfae:
+#   - vpce-0c5ed188453a0e759: Secrets Manager
+#   - vpce-0d742336b748f6e6f: ECR DKR
+#   - vpce-0be1d8ebb435ab975: ECR API
+#   - vpce-0f3cef8ed7248dd53: CloudWatch Logs
+#   - vpce-0bb7977c4473b71d1: S3 Gateway
+# Security group sg-07e98687cf39512b5 configured to allow HTTPS from ECS tasks
 
 # -----------------------------------------------------------------------------
 # PostgreSQL Database
@@ -220,6 +205,42 @@ unit "django_service" {
       DEFAULT_AGENT_MODEL = "openai:gpt-4o"
       DEFAULT_LLM_MODEL   = "gpt-4o"
     }
+  }
+}
+
+# -----------------------------------------------------------------------------
+# Security Group Connectivity Rules
+# -----------------------------------------------------------------------------
+# These units create ingress rules allowing the Django ECS service to connect
+# to PostgreSQL and Redis. Without these rules, the services are isolated.
+
+unit "django_to_postgresql_rule" {
+  source = "git::https://github.com/lightwave-media/lightwave-infrastructure-catalog.git//units/sg-to-db-sg-rule?ref=main"
+  path   = "sg-rules/django-to-postgresql"
+
+  values = {
+    version  = "main"
+    port     = 5432 # PostgreSQL port
+    protocol = "tcp"
+
+    # Dependency paths - unit will resolve outputs automatically
+    source_path = "../django"
+    dest_path   = "../postgresql"
+  }
+}
+
+unit "django_to_redis_rule" {
+  source = "git::https://github.com/lightwave-media/lightwave-infrastructure-catalog.git//units/sg-to-db-sg-rule?ref=main"
+  path   = "sg-rules/django-to-redis"
+
+  values = {
+    version  = "main"
+    port     = 6379 # Redis port
+    protocol = "tcp"
+
+    # Dependency paths - unit will resolve outputs automatically
+    source_path = "../django"
+    dest_path   = "../redis"
   }
 }
 
