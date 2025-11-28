@@ -140,10 +140,10 @@ jobs:
 
           echo "Payload: $PAYLOAD"
 
-          # Invoke Lambda
+          # Invoke Lambda (raw-in-base64-out accepts raw JSON, don't pre-encode)
           RESPONSE=$(aws lambda invoke \
             --function-name ${{ env.DEPLOY_RUNNER_LAMBDA }} \
-            --payload "$(echo $PAYLOAD | base64)" \
+            --payload "$PAYLOAD" \
             --cli-binary-format raw-in-base64-out \
             /tmp/response.json)
 
