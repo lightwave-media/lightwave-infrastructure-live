@@ -215,11 +215,11 @@ unit "django_service" {
 # to PostgreSQL and Redis. Without these rules, the services are isolated.
 
 unit "django_to_postgresql_rule" {
-  source = "git::https://github.com/lightwave-media/lightwave-infrastructure-catalog.git//units/sg-to-db-sg-rule?ref=main"
+  source = "git::https://github.com/lightwave-media/lightwave-infrastructure-catalog.git//units/sg-to-db-sg-rule?ref=v1.1.0"
   path   = "sg-rules/django-to-postgresql"
 
   values = {
-    version  = "main"
+    version  = "v1.1.0"
     port     = 5432 # PostgreSQL port
     protocol = "tcp"
 
@@ -230,11 +230,11 @@ unit "django_to_postgresql_rule" {
 }
 
 unit "django_to_redis_rule" {
-  source = "git::https://github.com/lightwave-media/lightwave-infrastructure-catalog.git//units/sg-to-db-sg-rule?ref=main"
+  source = "git::https://github.com/lightwave-media/lightwave-infrastructure-catalog.git//units/sg-to-db-sg-rule?ref=v1.1.0"
   path   = "sg-rules/django-to-redis"
 
   values = {
-    version  = "main"
+    version  = "v1.1.0"
     port     = 6379 # Redis port
     protocol = "tcp"
 
