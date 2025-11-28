@@ -53,11 +53,11 @@ locals {
 # PostgreSQL Database
 # -----------------------------------------------------------------------------
 unit "postgresql" {
-  source = "git::https://github.com/lightwave-media/lightwave-infrastructure-catalog.git//units/postgresql?ref=v1.0.0"
+  source = "git::https://github.com/lightwave-media/lightwave-infrastructure-catalog.git//units/postgresql?ref=v1.1.0"
   path   = "postgresql"
 
   values = {
-    version           = "v1.0.0"
+    version           = "v1.1.0"
     name              = local.name
     instance_class    = "db.t4g.small"
     allocated_storage = 50
@@ -98,11 +98,11 @@ unit "postgresql" {
 # Redis ElastiCache
 # -----------------------------------------------------------------------------
 unit "redis" {
-  source = "git::https://github.com/lightwave-media/lightwave-infrastructure-catalog.git//units/redis?ref=v1.0.0"
+  source = "git::https://github.com/lightwave-media/lightwave-infrastructure-catalog.git//units/redis?ref=v1.1.0"
   path   = "redis"
 
   values = {
-    version    = "v1.0.0"
+    version    = "v1.1.0"
     name       = local.name
     node_type  = "cache.t4g.small"
     subnet_ids = split(",", get_env("DB_SUBNET_IDS", ""))
@@ -143,11 +143,11 @@ unit "redis" {
 # Django ECS Fargate Service (CineOS)
 # -----------------------------------------------------------------------------
 unit "django_service" {
-  source = "git::https://github.com/lightwave-media/lightwave-infrastructure-catalog.git//units/django-fargate-stateful-service?ref=v1.0.0"
+  source = "git::https://github.com/lightwave-media/lightwave-infrastructure-catalog.git//units/django-fargate-stateful-service?ref=v1.1.0"
   path   = "django"
 
   values = {
-    version            = "v1.0.0"
+    version            = "v1.1.0"
     name               = local.name
     desired_count      = 2 # Production: 2 containers for HA
     cpu                = 512
